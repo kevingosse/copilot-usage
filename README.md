@@ -10,31 +10,30 @@ It fetches billing data through your logged-in `gh` session, then prints a compa
 - projected month-end cushion or overshoot
 - optional `--full` history details
 
+## Sample output
+
+```text
+┌──────────────────────────────────────────────────────┐
+│ 🤖 GitHub Copilot Premium Request Usage              │
+│ Month: March 2026   Quota: 1,500                     │
+│ As of: March 11, 2026 UTC                            │
+│ Used: 118.33  Remaining: 1,381.67  (7.9% consumed)   │
+│ ██░░░░░░░░░░░░░░░░░░░░░░░░  7.9%                     │
+└──────────────────────────────────────────────────────┘
+
+📈 Pace & Projection
+─────────────────────────────────────────────
+Avg daily usage (MTD):      10.8 req/day
+Days elapsed:               11 / 31
+Today budget:               ██████░░░░░░░░░░  27 / 69.08
+Projected month-end:        +1,166.52 requests (UNDER QUOTA ✓)
+```
+
 ## Requirements
 
 - Rust and Cargo
 - GitHub CLI (`gh`)
 - a GitHub account with access to Copilot premium request billing data
-
-## Authenticate with `gh`
-
-Log in once:
-
-```powershell
-gh auth login
-```
-
-If the billing endpoint complains about missing scopes, refresh the `user` scope:
-
-```powershell
-gh auth refresh -h github.com -s user
-```
-
-You can verify your login with:
-
-```powershell
-gh auth status
-```
 
 ## Install
 
@@ -61,6 +60,26 @@ cargo install --path .
 ```
 
 After that, you can run `copilot-usage` directly from your shell.
+
+## Authenticate with `gh`
+
+Log in once:
+
+```powershell
+gh auth login
+```
+
+If the billing endpoint complains about missing scopes, refresh the `user` scope:
+
+```powershell
+gh auth refresh -h github.com -s user
+```
+
+You can verify your login with:
+
+```powershell
+gh auth status
+```
 
 ## Usage
 
@@ -94,30 +113,3 @@ copilot-usage --username kevingosse --quota 1500
 - `--quota <N>`: monthly quota override, default `1500`
 - `--months <N>`: number of previous months to compare in `--full`, default `6`
 - `--full`: show the slower full dashboard with sparkline, previous months, and model breakdown
-
-## Sample output
-
-```text
-┌──────────────────────────────────────────────────────┐
-│ 🤖 GitHub Copilot Premium Request Usage              │
-│ Month: March 2026   Quota: 1,500                     │
-│ As of: March 11, 2026 UTC                            │
-│ Used: 118.33  Remaining: 1,381.67  (7.9% consumed)   │
-│ ██░░░░░░░░░░░░░░░░░░░░░░░░  7.9%                     │
-└──────────────────────────────────────────────────────┘
-
-📈 Pace & Projection
-─────────────────────────────────────────────
-Avg daily usage (MTD):      10.8 req/day
-Days elapsed:               11 / 31
-Today budget:               ██████░░░░░░░░░░  27 / 69.08
-Projected month-end:        +1,166.52 requests (UNDER QUOTA ✓)
-```
-
-## Notes
-
-- The tool uses UTC month boundaries because GitHub billing resets on the first day of the month at `00:00:00 UTC`.
-- Default mode is optimized to stay fast: it fetches the current month summary and today's usage only.
-- `--full` adds the expensive API calls for recent daily history and previous months.
-- Premium request usage can be fractional, so counts are displayed as decimals when needed.
-- The tool reads `grossQuantity` from GitHub's billing payload because `netQuantity` can stay at `0` while usage is still within quota.
