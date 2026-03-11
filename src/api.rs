@@ -178,7 +178,6 @@ fn execute_requests(
         let chunk_results = thread::scope(|scope| {
             let handles: Vec<_> = chunk
                 .iter()
-                .cloned()
                 .map(|request| {
                     let username = username.clone();
                     scope.spawn(move || -> Result<FetchResponse, String> {
@@ -189,7 +188,10 @@ fn execute_requests(
                             request.day,
                             request.synthetic_date,
                         )?;
-                        Ok(FetchResponse { request, rows })
+                        Ok(FetchResponse {
+                            request: request.clone(),
+                            rows,
+                        })
                     })
                 })
                 .collect();
@@ -394,10 +396,8 @@ fn collect_records(value: &Value, synthetic_date: NaiveDate, output: &mut Vec<Ap
                 }
             }
 
-            if !found_nested {
-                if let Some(record) = parse_row(map, synthetic_date) {
-                    output.push(record);
-                }
+            if !found_nested && let Some(record) = parse_row(map, synthetic_date) {
+                output.push(record);
             }
         }
         _ => {}
@@ -430,19 +430,19 @@ fn parse_row(map: &serde_json::Map<String, Value>, synthetic_date: NaiveDate) ->
 }
 
 fn parse_date(map: &serde_json::Map<String, Value>, fallback: NaiveDate) -> NaiveDate {
-    if let Some(raw_date) = extract_string(map, &["date", "day"]) {
-        if let Ok(date) = NaiveDate::parse_from_str(&raw_date, "%Y-%m-%d") {
-            return date;
-        }
+    if let Some(raw_date) = extract_string(map, &["date", "day"])
+        && let Ok(date) = NaiveDate::parse_from_str(&raw_date, "%Y-%m-%d")
+    {
+        return date;
     }
 
     let year = extract_u32(map, &["year"]).map(|value| value as i32);
     let month = extract_u32(map, &["month"]);
     let day = extract_u32(map, &["day"]).or(Some(1));
-    if let (Some(year), Some(month), Some(day)) = (year, month, day) {
-        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
-            return date;
-        }
+    if let (Some(year), Some(month), Some(day)) = (year, month, day)
+        && let Some(date) = NaiveDate::from_ymd_opt(year, month, day)
+    {
+        return date;
     }
 
     fallback
