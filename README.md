@@ -112,4 +112,4 @@ copilot-usage --username kevingosse --quota 1500
 - `--username <USER>`: GitHub username. If omitted, the tool tries `GITHUB_USER`, `GH_USERNAME`, then `gh api user --jq .login`
 - `--quota <N>`: monthly quota override, default `1500`
 - `--months <N>`: number of previous months to compare in `--full`, default `6`
-- `--full`: show the slower full dashboard with sparkline, previous months, and model breakdown
+- `--full`: show the full dashboard with sparkline, previous months, and model breakdown

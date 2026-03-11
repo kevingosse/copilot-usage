@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, process::Command};
+use std::{collections::BTreeMap, process::Command, thread};
 
 use chrono::{Datelike, NaiveDate};
 use serde_json::Value;
@@ -7,6 +7,9 @@ use crate::models::{DailyUsage, UsageDataset};
 
 const API_VERSION: &str = "2022-11-28";
 const RECENT_WINDOW_DAYS: u32 = 14;
+// Default `--full` tops out at 21 requests, so 20 keeps us near one wave
+// while staying well below GitHub's 100-concurrent-request secondary limit.
+const MAX_CONCURRENT_REQUESTS: usize = 20;
 
 #[derive(Clone, Debug)]
 struct ApiRecord {
@@ -15,6 +18,29 @@ struct ApiRecord {
     model: Option<String>,
     total_monthly_quota: Option<f64>,
     exceeds_quota: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FetchTarget {
+    RecentDay(NaiveDate),
+    CurrentMonth(NaiveDate),
+    CurrentDay(NaiveDate),
+    PreviousMonth(NaiveDate),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FetchRequest {
+    target: FetchTarget,
+    year: i32,
+    month: u32,
+    day: Option<u32>,
+    synthetic_date: NaiveDate,
+}
+
+#[derive(Clone, Debug)]
+struct FetchResponse {
+    request: FetchRequest,
+    rows: Vec<ApiRecord>,
 }
 
 pub fn load_api_usage(
@@ -32,68 +58,47 @@ pub fn load_api_usage(
     let mut current_day_total = None;
     let mut current_month_model_breakdown = BTreeMap::new();
 
-    let current_year = today.year();
-    let current_month = today.month();
-    let month_start = crate::analytics::first_day_of_month(today);
+    let recent_window_starts_at_month_start =
+        include_recent_daily && recent_window_start_day(today) == 1;
+    let mut recent_rows = Vec::new();
 
-    if include_recent_daily {
-        let start_day = today
-            .day()
-            .saturating_sub(RECENT_WINDOW_DAYS.saturating_sub(1))
-            .max(1);
-        let mut recent_rows = Vec::new();
-        for day in start_day..=today.day() {
-            let date =
-                NaiveDate::from_ymd_opt(current_year, current_month, day).expect("valid date");
-            let rows = fetch_period(username, current_year, current_month, Some(day), date)?;
-            if date == today {
+    for response in execute_requests(
+        username,
+        build_fetch_plan(
+            today,
+            previous_months,
+            include_recent_daily,
+            include_previous_months,
+        ),
+    )? {
+        let rows = response.rows;
+        match response.request.target {
+            FetchTarget::RecentDay(date) => {
+                if date == today {
+                    current_day_total = Some(sum_records(&rows));
+                }
+                recent_rows.extend(rows.iter().cloned());
+                merge_records(&mut by_day, &mut latest_quota, rows);
+            }
+            FetchTarget::CurrentMonth(_) => {
+                observe_quota(&mut latest_quota, &rows);
+                current_month_total = Some(sum_records(&rows));
+                current_month_model_breakdown = aggregate_models(&rows);
+            }
+            FetchTarget::CurrentDay(_) => {
+                observe_quota(&mut latest_quota, &rows);
                 current_day_total = Some(sum_records(&rows));
             }
-            recent_rows.extend(rows.iter().cloned());
-            merge_records(&mut by_day, &mut latest_quota, rows);
-        }
-
-        if start_day == 1 {
-            current_month_total = Some(sum_records(&recent_rows));
-            current_month_model_breakdown = aggregate_models(&recent_rows);
+            FetchTarget::PreviousMonth(month_anchor) => {
+                observe_quota(&mut latest_quota, &rows);
+                monthly_totals.insert(month_anchor, sum_records(&rows));
+            }
         }
     }
 
-    if current_month_total.is_none() {
-        let current_month_rows =
-            fetch_period(username, current_year, current_month, None, month_start)?;
-        observe_quota(&mut latest_quota, &current_month_rows);
-        current_month_total = Some(sum_records(&current_month_rows));
-        current_month_model_breakdown = aggregate_models(&current_month_rows);
-    }
-
-    if current_day_total.is_none() {
-        let today_rows = fetch_period(
-            username,
-            current_year,
-            current_month,
-            Some(today.day()),
-            today,
-        )?;
-        observe_quota(&mut latest_quota, &today_rows);
-        current_day_total = Some(sum_records(&today_rows));
-    }
-
-    if include_previous_months {
-        for offset in 1..=previous_months {
-            let month_anchor = month_start
-                .checked_sub_months(chrono::Months::new(offset as u32))
-                .expect("valid previous month");
-            let rows = fetch_period(
-                username,
-                month_anchor.year(),
-                month_anchor.month(),
-                None,
-                month_anchor,
-            )?;
-            observe_quota(&mut latest_quota, &rows);
-            monthly_totals.insert(month_anchor, sum_records(&rows));
-        }
+    if recent_window_starts_at_month_start {
+        current_month_total = Some(sum_records(&recent_rows));
+        current_month_model_breakdown = aggregate_models(&recent_rows);
     }
 
     Ok(UsageDataset {
@@ -109,6 +114,124 @@ pub fn load_api_usage(
     })
 }
 
+fn build_fetch_plan(
+    today: NaiveDate,
+    previous_months: usize,
+    include_recent_daily: bool,
+    include_previous_months: bool,
+) -> Vec<FetchRequest> {
+    let mut requests = Vec::new();
+    let month_start = crate::analytics::first_day_of_month(today);
+
+    if include_recent_daily {
+        let start_day = recent_window_start_day(today);
+        for day in start_day..=today.day() {
+            let date =
+                NaiveDate::from_ymd_opt(today.year(), today.month(), day).expect("valid date");
+            requests.push(FetchRequest::for_day(FetchTarget::RecentDay(date), date));
+        }
+
+        if start_day != 1 {
+            requests.push(FetchRequest::for_month(
+                FetchTarget::CurrentMonth(month_start),
+                month_start,
+            ));
+        }
+    } else {
+        requests.push(FetchRequest::for_month(
+            FetchTarget::CurrentMonth(month_start),
+            month_start,
+        ));
+        requests.push(FetchRequest::for_day(FetchTarget::CurrentDay(today), today));
+    }
+
+    if include_previous_months {
+        for offset in 1..=previous_months {
+            let month_anchor = month_start
+                .checked_sub_months(chrono::Months::new(offset as u32))
+                .expect("valid previous month");
+            requests.push(FetchRequest::for_month(
+                FetchTarget::PreviousMonth(month_anchor),
+                month_anchor,
+            ));
+        }
+    }
+
+    requests
+}
+
+fn recent_window_start_day(today: NaiveDate) -> u32 {
+    today
+        .day()
+        .saturating_sub(RECENT_WINDOW_DAYS.saturating_sub(1))
+        .max(1)
+}
+
+fn execute_requests(
+    username: &str,
+    requests: Vec<FetchRequest>,
+) -> Result<Vec<FetchResponse>, String> {
+    let mut responses = Vec::with_capacity(requests.len());
+    let username = username.to_string();
+
+    for chunk in requests.chunks(MAX_CONCURRENT_REQUESTS) {
+        let chunk_results = thread::scope(|scope| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .cloned()
+                .map(|request| {
+                    let username = username.clone();
+                    scope.spawn(move || -> Result<FetchResponse, String> {
+                        let rows = fetch_period(
+                            &username,
+                            request.year,
+                            request.month,
+                            request.day,
+                            request.synthetic_date,
+                        )?;
+                        Ok(FetchResponse { request, rows })
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| "internal error: GitHub request worker panicked".to_string())?
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })?;
+
+        responses.extend(chunk_results);
+    }
+
+    Ok(responses)
+}
+
+impl FetchRequest {
+    fn for_day(target: FetchTarget, date: NaiveDate) -> Self {
+        Self {
+            target,
+            year: date.year(),
+            month: date.month(),
+            day: Some(date.day()),
+            synthetic_date: date,
+        }
+    }
+
+    fn for_month(target: FetchTarget, month_start: NaiveDate) -> Self {
+        Self {
+            target,
+            year: month_start.year(),
+            month: month_start.month(),
+            day: None,
+            synthetic_date: month_start,
+        }
+    }
+}
+
 fn fetch_period(
     username: &str,
     year: i32,
@@ -116,6 +239,7 @@ fn fetch_period(
     day: Option<u32>,
     synthetic_date: NaiveDate,
 ) -> Result<Vec<ApiRecord>, String> {
+    let period_label = describe_period(year, month, day);
     let mut endpoint = format!(
         "/users/{username}/settings/billing/premium_request/usage?year={year}&month={month}"
     );
@@ -134,7 +258,7 @@ fn fetch_period(
         ])
         .output()
         .map_err(|error| {
-            format!("failed to run gh for {year}-{month:02}: {error}. Is GitHub CLI installed?")
+            format!("failed to run gh for {period_label}: {error}. Is GitHub CLI installed?")
         })?;
 
     if !output.status.success() {
@@ -162,7 +286,7 @@ fn fetch_period(
             return Err("GitHub API rate limit exceeded. Try again later.".to_string());
         }
         return Err(format!(
-            "gh api request failed for {year}-{month:02}: {}",
+            "gh api request failed for {period_label}: {}",
             if message.is_empty() {
                 "unknown error"
             } else {
@@ -172,9 +296,16 @@ fn fetch_period(
     }
 
     let value = serde_json::from_slice::<Value>(&output.stdout).map_err(|error| {
-        format!("failed to parse GitHub API response for {year}-{month:02}: {error}")
+        format!("failed to parse GitHub API response for {period_label}: {error}")
     })?;
     Ok(parse_usage_payload(&value, synthetic_date))
+}
+
+fn describe_period(year: i32, month: u32, day: Option<u32>) -> String {
+    match day {
+        Some(day) => format!("{year}-{month:02}-{day:02}"),
+        None => format!("{year}-{month:02}"),
+    }
 }
 
 fn merge_records(
@@ -365,7 +496,7 @@ mod tests {
     use chrono::NaiveDate;
     use serde_json::json;
 
-    use super::parse_usage_payload;
+    use super::{FetchTarget, build_fetch_plan, parse_usage_payload};
 
     #[test]
     fn parses_gross_quantity_from_usage_items() {
@@ -389,5 +520,71 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!((rows[0].quantity - 18.0).abs() < 0.001);
         assert!((rows[1].quantity - 0.33).abs() < 0.001);
+    }
+
+    #[test]
+    fn full_plan_skips_redundant_current_period_requests_when_recent_window_covers_month() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 11).unwrap();
+
+        let plan = build_fetch_plan(today, 2, true, true);
+
+        assert_eq!(plan.len(), 13);
+        assert_eq!(
+            plan.iter()
+                .filter(|request| matches!(request.target, FetchTarget::RecentDay(_)))
+                .count(),
+            11
+        );
+        assert_eq!(
+            plan.iter()
+                .filter(|request| matches!(request.target, FetchTarget::PreviousMonth(_)))
+                .count(),
+            2
+        );
+        assert!(!plan.iter().any(|request| matches!(
+            request.target,
+            FetchTarget::CurrentMonth(_) | FetchTarget::CurrentDay(_)
+        )));
+    }
+
+    #[test]
+    fn compact_plan_fetches_current_month_and_today() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 20).unwrap();
+
+        let plan = build_fetch_plan(today, 0, false, false);
+
+        assert_eq!(plan.len(), 2);
+        assert!(
+            plan.iter()
+                .any(|request| matches!(request.target, FetchTarget::CurrentMonth(_)))
+        );
+        assert!(
+            plan.iter()
+                .any(|request| matches!(request.target, FetchTarget::CurrentDay(_)))
+        );
+    }
+
+    #[test]
+    fn full_plan_adds_current_month_when_recent_window_is_partial() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 20).unwrap();
+
+        let plan = build_fetch_plan(today, 0, true, false);
+
+        assert_eq!(plan.len(), 15);
+        assert_eq!(
+            plan.iter()
+                .filter(|request| matches!(request.target, FetchTarget::RecentDay(_)))
+                .count(),
+            14
+        );
+        assert!(
+            plan.iter()
+                .any(|request| matches!(request.target, FetchTarget::CurrentMonth(_)))
+        );
+        assert!(
+            !plan
+                .iter()
+                .any(|request| matches!(request.target, FetchTarget::CurrentDay(_)))
+        );
     }
 }
