@@ -1,3 +1,4 @@
+use chrono::{Datelike, Weekday};
 use colored::{ColoredString, Colorize};
 use unicode_width::UnicodeWidthStr;
 
@@ -95,23 +96,41 @@ fn render_pace_projection(summary: &UsageSummary) -> String {
 }
 
 fn render_recent_sparkline(summary: &UsageSummary) -> String {
-    let labels = summary
+    let dates = summary
         .recent_days
         .iter()
-        .map(|(date, _)| date.format("%b %d").to_string())
-        .collect::<Vec<_>>()
-        .join("  ");
+        .map(|(date, _)| *date)
+        .collect::<Vec<_>>();
     let points = summary
         .recent_days
         .iter()
         .map(|(_, value)| *value)
         .collect::<Vec<_>>();
+    let cell_width = 3;
+    let weekday_labels = fixed_width_row(
+        &dates
+            .iter()
+            .map(|date| weekday_abbrev(date.weekday()).to_string())
+            .collect::<Vec<_>>(),
+        cell_width,
+    );
+    let day_labels = fixed_width_row(
+        &dates
+            .iter()
+            .map(|date| date.format("%d").to_string())
+            .collect::<Vec<_>>(),
+        cell_width,
+    );
 
     [
         format!("{}", "📊 Daily Usage (last 14 days)".bold().bright_cyan()),
         divider(),
-        labels.dimmed().to_string(),
-        sparkline(&points).bright_green().bold().to_string(),
+        spaced_sparkline(&points, cell_width)
+            .bright_green()
+            .bold()
+            .to_string(),
+        weekday_labels.dimmed().to_string(),
+        day_labels.dimmed().to_string(),
     ]
     .join("\n")
 }
@@ -313,6 +332,34 @@ fn sparkline(values: &[f64]) -> String {
         .collect::<String>()
 }
 
+fn spaced_sparkline(values: &[f64], cell_width: usize) -> String {
+    sparkline(values)
+        .chars()
+        .map(|block| block.to_string().repeat(cell_width))
+        .collect::<String>()
+}
+
+fn fixed_width_row(values: &[String], cell_width: usize) -> String {
+    values
+        .iter()
+        .map(|value| format!("{value:^cell_width$}"))
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
+fn weekday_abbrev(weekday: Weekday) -> &'static str {
+    match weekday {
+        Weekday::Mon => "Mo",
+        Weekday::Tue => "Tu",
+        Weekday::Wed => "We",
+        Weekday::Thu => "Th",
+        Weekday::Fri => "Fr",
+        Weekday::Sat => "Sa",
+        Weekday::Sun => "Su",
+    }
+}
+
 fn format_quantity(value: f64) -> String {
     let rounded = (value * 100.0).round() / 100.0;
     if (rounded - rounded.round()).abs() < 0.005 {
@@ -371,7 +418,12 @@ fn truncate(value: &str, max_width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_integer, format_quantity, sparkline};
+    use chrono::{Datelike, NaiveDate};
+
+    use super::{
+        fixed_width_row, format_integer, format_quantity, spaced_sparkline, sparkline,
+        weekday_abbrev,
+    };
 
     #[test]
     fn formats_numbers_with_commas() {
@@ -388,5 +440,33 @@ mod tests {
     #[test]
     fn renders_sparkline() {
         assert_eq!(sparkline(&[0.0, 5.0, 10.0]).chars().count(), 3);
+    }
+
+    #[test]
+    fn renders_aligned_recent_usage_rows() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2026, 3, 9).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 3, 10).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 3, 11).expect("valid date"),
+        ];
+        let weekdays = fixed_width_row(
+            &dates
+                .iter()
+                .map(|date| weekday_abbrev(date.weekday()).to_string())
+                .collect::<Vec<_>>(),
+            3,
+        );
+        let day_numbers = fixed_width_row(
+            &dates
+                .iter()
+                .map(|date| date.format("%d").to_string())
+                .collect::<Vec<_>>(),
+            3,
+        );
+        let chart = spaced_sparkline(&[1.0, 3.0, 5.0], 3);
+
+        assert_eq!(weekdays, "Mo Tu We");
+        assert_eq!(day_numbers, "09 10 11");
+        assert_eq!(chart, "▂▂▂▅▅▅███");
     }
 }
