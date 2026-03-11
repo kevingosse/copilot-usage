@@ -1,6 +1,8 @@
 # copilot-usage
 
-`copilot-usage` is a one-shot Rust CLI that shows how fast you're consuming GitHub Copilot premium requests and whether that pace is sustainable for the rest of the month.
+`copilot-usage` is a Rust CLI tool that shows how fast you're consuming GitHub Copilot premium requests and whether that pace is sustainable for the rest of the month.
+
+<img width="2314" height="1521" alt="image" src="https://github.com/user-attachments/assets/f2ba0578-e31f-4c13-bf15-adc63ab5160e" />
 
 It fetches billing data through your logged-in `gh` session, then prints a compact terminal dashboard with:
 
@@ -9,25 +11,6 @@ It fetches billing data through your logged-in `gh` session, then prints a compa
 - a "today budget" progress bar
 - projected month-end cushion or overshoot
 - optional `--full` history details
-
-## Sample output
-
-```text
-┌──────────────────────────────────────────────────────┐
-│ 🤖 GitHub Copilot Premium Request Usage              │
-│ Month: March 2026   Quota: 1,500                     │
-│ As of: March 11, 2026 UTC                            │
-│ Used: 118.33  Remaining: 1,381.67  (7.9% consumed)   │
-│ ██░░░░░░░░░░░░░░░░░░░░░░░░  7.9%                     │
-└──────────────────────────────────────────────────────┘
-
-📈 Pace & Projection
-─────────────────────────────────────────────
-Avg daily usage (MTD):      10.8 req/day
-Days elapsed:               11 / 31
-Today budget:               ██████░░░░░░░░░░  27 / 69.08
-Projected month-end:        +1,166.52 requests (UNDER QUOTA ✓)
-```
 
 ## Requirements
 
