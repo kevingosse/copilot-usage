@@ -1,7 +1,13 @@
 [package]
 name = "copilot-usage"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+description = "CLI to inspect GitHub Copilot premium request usage"
+license = "MIT"
+repository = "https://github.com/kevingosse/copilot-usage"
+readme = "README.md"
+keywords = ["github", "copilot", "cli"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -37,6 +37,12 @@ Projected month-end:        +1,166.52 requests (UNDER QUOTA ✓)
 
 ## Install
 
+### Install with cargo
+
+```powershell
+cargo install copilot-usage
+```
+
 ### Build from a local checkout
 
 ```powershell
