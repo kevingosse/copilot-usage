@@ -89,16 +89,10 @@ gh auth status
 
 ## Usage
 
-Run the default fast view:
+Run the default view:
 
 ```powershell
 copilot-usage
-```
-
-Or run it from source without installing:
-
-```powershell
-cargo run --release --
 ```
 
 Show the full dashboard with recent daily detail and previous months:
