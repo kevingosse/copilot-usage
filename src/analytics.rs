@@ -52,7 +52,7 @@ pub fn analyze_usage(
     let percent_consumed = if dataset.quota == 0.0 {
         0.0
     } else {
-        (mtd_used as f64 / dataset.quota as f64) * 100.0
+        (mtd_used / dataset.quota) * 100.0
     };
 
     let avg_daily_usage = if days_elapsed == 0 {

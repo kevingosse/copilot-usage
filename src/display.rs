@@ -280,11 +280,17 @@ fn format_today_budget_bar(summary: &UsageSummary) -> String {
 
 fn format_projected_outcome(summary: &UsageSummary) -> String {
     let outcome = if summary.projected_over_quota {
-        format!("-{} requests (OVER QUOTA ✗)", format_quantity(summary.cushion_or_overshoot.abs()))
-            .red()
+        format!(
+            "-{} requests (OVER QUOTA ✗)",
+            format_quantity(summary.cushion_or_overshoot.abs())
+        )
+        .red()
     } else {
-        format!("+{} requests (UNDER QUOTA ✓)", format_quantity(summary.cushion_or_overshoot.max(0.0)))
-            .green()
+        format!(
+            "+{} requests (UNDER QUOTA ✓)",
+            format_quantity(summary.cushion_or_overshoot.max(0.0))
+        )
+        .green()
     };
 
     outcome.bold().to_string()
@@ -444,7 +450,7 @@ mod tests {
 
     #[test]
     fn renders_aligned_recent_usage_rows() {
-        let dates = vec![
+        let dates = [
             NaiveDate::from_ymd_opt(2026, 3, 9).expect("valid date"),
             NaiveDate::from_ymd_opt(2026, 3, 10).expect("valid date"),
             NaiveDate::from_ymd_opt(2026, 3, 11).expect("valid date"),
