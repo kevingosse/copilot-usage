@@ -90,9 +90,16 @@ Override the username or quota if needed:
 copilot-usage --username kevingosse --quota 1500
 ```
 
+Show each `gh` command and the raw API response for troubleshooting:
+
+```powershell
+copilot-usage --debug
+```
+
 ## Options
 
 - `--username <USER>`: GitHub username. If omitted, the tool tries `GITHUB_USER`, `GH_USERNAME`, then `gh api user --jq .login`
 - `--quota <N>`: monthly quota override, default `1500`
 - `--months <N>`: number of previous months to compare in `--full`, default `6`
 - `--full`: show the full dashboard with sparkline, previous months, and model breakdown
+- `--debug`: print each `gh` command plus raw stdout/stderr to `stderr`
