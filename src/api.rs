@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, process::Command, thread};
+use std::{collections::BTreeMap, thread};
 
 use chrono::{Datelike, NaiveDate};
 use serde_json::Value;
@@ -50,6 +50,7 @@ pub fn load_api_usage(
     today: NaiveDate,
     include_recent_daily: bool,
     include_previous_months: bool,
+    debug: bool,
 ) -> Result<UsageDataset, String> {
     let mut by_day: BTreeMap<NaiveDate, DailyUsage> = BTreeMap::new();
     let mut latest_quota: Option<(NaiveDate, f64)> = None;
@@ -70,6 +71,7 @@ pub fn load_api_usage(
             include_recent_daily,
             include_previous_months,
         ),
+        debug,
     )? {
         let rows = response.rows;
         match response.request.target {
@@ -170,6 +172,7 @@ fn recent_window_start_day(today: NaiveDate) -> u32 {
 fn execute_requests(
     username: &str,
     requests: Vec<FetchRequest>,
+    debug: bool,
 ) -> Result<Vec<FetchResponse>, String> {
     let mut responses = Vec::with_capacity(requests.len());
     let username = username.to_string();
@@ -187,6 +190,7 @@ fn execute_requests(
                             request.month,
                             request.day,
                             request.synthetic_date,
+                            debug,
                         )?;
                         Ok(FetchResponse {
                             request: request.clone(),
@@ -240,6 +244,7 @@ fn fetch_period(
     month: u32,
     day: Option<u32>,
     synthetic_date: NaiveDate,
+    debug: bool,
 ) -> Result<Vec<ApiRecord>, String> {
     let period_label = describe_period(year, month, day);
     let mut endpoint = format!(
@@ -249,19 +254,20 @@ fn fetch_period(
         endpoint.push_str(&format!("&day={day}"));
     }
 
-    let output = Command::new("gh")
-        .args([
-            "api",
-            "-H",
-            "Accept: application/vnd.github+json",
-            "-H",
-            &format!("X-GitHub-Api-Version: {API_VERSION}"),
-            &endpoint,
-        ])
-        .output()
-        .map_err(|error| {
-            format!("failed to run gh for {period_label}: {error}. Is GitHub CLI installed?")
-        })?;
+    let output = crate::gh::run_gh(
+        [
+            "api".to_string(),
+            "-H".to_string(),
+            "Accept: application/vnd.github+json".to_string(),
+            "-H".to_string(),
+            format!("X-GitHub-Api-Version: {API_VERSION}"),
+            endpoint.clone(),
+        ],
+        debug,
+    )
+    .map_err(|error| {
+        format!("failed to run gh for {period_label}: {error}. Is GitHub CLI installed?")
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -1,12 +1,10 @@
 mod analytics;
 mod api;
 mod display;
+mod gh;
 mod models;
 
-use std::{
-    env,
-    process::{Command, ExitCode},
-};
+use std::{env, process::ExitCode};
 
 use analytics::analyze_usage;
 use chrono::Utc;
@@ -36,6 +34,10 @@ struct Cli {
     /// Show the full dashboard with recent daily detail and previous months
     #[arg(long)]
     full: bool,
+
+    /// Print each gh command and its raw response to stderr
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() -> ExitCode {
@@ -58,8 +60,10 @@ fn run() -> Result<(), String> {
     }
     let today = Utc::now().date_naive();
 
-    let username = resolve_username(cli.username.as_deref())?;
-    let dataset = api::load_api_usage(&username, cli.quota, cli.months, today, cli.full, cli.full)?;
+    let username = resolve_username(cli.username.as_deref(), cli.debug)?;
+    let dataset = api::load_api_usage(
+        &username, cli.quota, cli.months, today, cli.full, cli.full, cli.debug,
+    )?;
 
     render(dataset, today, cli.months);
     Ok(())
@@ -70,7 +74,7 @@ fn render(dataset: UsageDataset, today: chrono::NaiveDate, previous_months: usiz
     println!("{}", display::render_report(&summary));
 }
 
-fn resolve_username(cli_username: Option<&str>) -> Result<String, String> {
+fn resolve_username(cli_username: Option<&str>, debug: bool) -> Result<String, String> {
     if let Some(username) = cli_username
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -87,17 +91,14 @@ fn resolve_username(cli_username: Option<&str>) -> Result<String, String> {
         }
     }
 
-    infer_username_from_gh().ok_or_else(|| {
+    infer_username_from_gh(debug).ok_or_else(|| {
         "missing GitHub username (use --username, set GITHUB_USER/GH_USERNAME, or log in with gh)"
             .to_string()
     })
 }
 
-fn infer_username_from_gh() -> Option<String> {
-    let output = Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .output()
-        .ok()?;
+fn infer_username_from_gh(debug: bool) -> Option<String> {
+    let output = crate::gh::run_gh(["api", "user", "--jq", ".login"], debug).ok()?;
     if !output.status.success() {
         return None;
     }
